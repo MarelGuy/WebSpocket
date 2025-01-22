@@ -1,220 +1,191 @@
+import { generateSecWebSocketKey } from "./functions/generateSecWebSocketKey.ts";
+import { concatenateUint8Arrays } from "./functions/concatenateUint8Arrays.ts";
 import { DataTypes, ErrorTypes, ReadyState } from "./enums.ts";
 import { FrameGenerator } from "./Frame.ts";
-import { concatenateUint8Arrays } from "./functions/concatenateUint8Arrays.ts";
-import { generateSecWebSocketKey } from "./functions/generateSecWebSocketKey.ts";
 
 class WebSpocket {
-    hostname: string;
-    port: number;
-    url: string;
-    route: string;
-    readyState: ReadyState;
-    protocols?: string | string[];
-    headers: Headers = new Headers();
-    connection?: Deno.Conn;
-    e?: {
-        type: DataTypes;
-        data: string | Uint8Array;
-    };
+	url: URL;
+	readyState: ReadyState;
+	protocols?: string | string[];
+	headers: Headers = new Headers();
+	connection?: Deno.Conn;
+	e?: {
+		type: DataTypes;
+		data: string | Uint8Array;
+	};
 
-    onReady?: () => void;
-    onMessage?: (e: { type: DataTypes; data: string | Uint8Array; }) => void;
-    onError?: (error: ErrorTypes) => void;
-    onClose?: (errorType: ErrorTypes) => void;
+	onReady?: () => void;
+	onMessage?: (e: { type: DataTypes; data: string | Uint8Array; }) => void;
+	onError?: (error: ErrorTypes) => void;
+	onClose?: (errorType: ErrorTypes) => void;
 
-    constructor(connectOptions: { url: string, protocols?: string | string[], headers?: Headers; }) {
-        this.url = connectOptions.url;
-        this.readyState = ReadyState.CLOSED;
-        this.protocols = connectOptions.protocols;
+	constructor(connectOptions: { url: string, protocols?: string | string[], headers?: Headers; }) {
+		this.url = new URL(connectOptions.url);
+		this.readyState = ReadyState.CLOSED;
+		this.protocols = connectOptions.protocols;
 
-        if (connectOptions.headers) this.headers = connectOptions.headers;
+		if (connectOptions.headers) this.headers = connectOptions.headers;
+	}
 
-        const splitUrl = connectOptions.url.split(":");
+	async connect(headers?: Headers): Promise<void> {
+		this.readyState = ReadyState.CONNECTING;
 
-        this.hostname = splitUrl[1].split("//")[1];
-        this.port = parseInt(splitUrl[2]);
+		if (headers) this.headers = headers;
 
-        if (splitUrl[0] === "wss") this.port = 443;
-        else if (splitUrl[0] === "ws") this.port = 80;
-        else throw new Error("Invalid WebSocket URL");
+		const connection: Deno.TcpConn = await Deno.connect({
+			hostname: this.url.hostname,
+			port: parseInt(this.url.port, 10),
+			transport: "tcp",
+		});
 
-        if (this.hostname.charAt(this.hostname.length - 1) === "/") this.hostname = this.hostname.slice(0, -1);
+		const request = [
+			`GET ${this.url.pathname} HTTP/1.1`,
+			`host: ${this.url.hostname}`,
+			`upgrade: websocket`,
+			`connection: Upgrade`,
+			`sec-websocket-key: ${generateSecWebSocketKey()}`,
+			`sec-websocket-version: 13`,
+			'user-agent: WebSpocket',
+			...Array.from(this.headers.entries()).map(([key, value]) => `${key}: ${value}`),
+			`\r\n`
+		].join("\r\n");
 
-        if (this.hostname == "localhost") this.hostname = "127.0.0.1";
+		await connection.write(new TextEncoder().encode(request));
 
-        if (splitUrl[2]) {
-            const splitRoute = splitUrl[2].split("/");
+		const buffer = new Uint8Array(1024);
 
-            if (splitRoute[1]) splitRoute.shift();
+		await connection.read(buffer);
 
-            this.route = splitRoute.join("/");
-        } else this.route = "";
-    }
+		if (new TextDecoder().decode(buffer).split("\r\n")[0].split(" ")[1] == "101") {
+			this.readyState = ReadyState.CONNECTED;
+			this.connection = connection;
+		} else this.readyState = ReadyState.CLOSED;
 
-    async connect(headers?: Headers): Promise<void> {
-        this.readyState = ReadyState.CONNECTING;
+		this.listenForFrames();
+		this.onReady?.();
+	}
 
-        if (headers) this.headers = headers;
+	send(data: string): void {
+		if (this.readyState === ReadyState.OPEN || this.readyState === ReadyState.CONNECTED) {
+			if (!data) return;
 
-        const connection = await Deno.connect({
-            hostname: this.hostname,
-            port: this.port,
-            transport: "tcp",
-        });
+			this.readyState = ReadyState.OPEN;
+			this.connection?.write(new FrameGenerator(0x1, new TextEncoder().encode(data), true).frame).then(() => this.readyState = ReadyState.CONNECTED);
+		}
+	}
 
-        const request = [
-            `GET /${this.route} HTTP/1.1`,
-            `host: ${this.hostname}:${this.port}`,
-            `upgrade: websocket`,
-            `connection: Upgrade`,
-            `sec-websocket-key: ${generateSecWebSocketKey()}`,
-            `sec-websocket-version: 13`,
-            'user-agent: WebSpocket',
-            ...Array.from(this.headers.entries()).map(([key, value]) => `${key}: ${value}`),
-            `\r\n`
-        ].join("\r\n");
+	close(errorType: ErrorTypes): void {
+		if (this.readyState !== ReadyState.CLOSED && this.readyState !== ReadyState.CLOSING) {
+			this.readyState = ReadyState.CLOSING;
 
-        await connection.write(new TextEncoder().encode(request));
+			if (this.connection) {
+				try {
+					const errorTypeBytes = new Uint8Array(2);
 
-        const buffer = new Uint8Array(1024);
+					errorTypeBytes[0] = (errorType >> 8) & 0xFF;
+					errorTypeBytes[1] = errorType & 0xFF;
 
-        await connection.read(buffer);
+					this.connection.write(new FrameGenerator(0x8, errorTypeBytes, true).frame).then(() => {
+						this.connection!.close();
+						this.readyState = ReadyState.CLOSED;
+					});
+				} catch (error) {
+					console.error("Error sending close frame:", error);
+				}
+				this.connection = undefined;
+			}
+		}
+	}
 
-        if (new TextDecoder().decode(buffer).split("\r\n")[0].split(" ")[1] == "101") {
-            this.readyState = ReadyState.CONNECTED;
-            this.connection = connection;
-        } else this.readyState = ReadyState.CLOSED;
+	private async listenForFrames(): Promise<void> {
+		if (!this.connection) throw new Error("Connection not established");
 
-        this.listenForFrames();
-        this.onReady?.();
+		const buffer = new Uint8Array(65536);
 
-    }
+		let messageBuffer: Uint8Array[] = [];
 
-    send(data: string): void {
-        if (this.readyState === ReadyState.OPEN || this.readyState === ReadyState.CONNECTED) {
-            if (!data) return;
+		while (this.readyState === ReadyState.CONNECTED) {
+			const readBytes = await this.connection?.read(buffer);
 
-            this.readyState = ReadyState.OPEN;
+			if (!readBytes) {
+				this.close(ErrorTypes.INTERNAL_ERROR);
+				break;
+			}
 
-            this.connection?.write(new FrameGenerator(0x1, new TextEncoder().encode(data), true).frame).then(() => this.readyState = ReadyState.CONNECTED);
-        }
-    }
+			let offset = 0;
 
-    close(errorType: ErrorTypes): void {
-        if (this.readyState !== ReadyState.CLOSED && this.readyState !== ReadyState.CLOSING) {
-            this.readyState = ReadyState.CLOSING;
+			while (offset < readBytes) {
+				const fin = (buffer[offset] & 0x80) >> 7;
+				const opcode = (buffer[offset] & 0x0f);
+				const mask = (buffer[offset + 1] & 0x80) >> 7;
 
-            if (this.connection) {
-                try {
-                    const errorTypeBytes = new Uint8Array(2);
+				if (mask) {
+					this.close(ErrorTypes.PROTOCOL_ERROR);
+					break;
+				}
 
-                    errorTypeBytes[0] = (errorType >> 8) & 0xFF;
-                    errorTypeBytes[1] = errorType & 0xFF;
+				let payloadLen = (buffer[offset + 1] & 0x7f);
 
-                    this.connection.write(new FrameGenerator(0x8, errorTypeBytes, true).frame).then(() => {
-                        this.connection!.close();
+				offset += 2;
 
-                        this.readyState = ReadyState.CLOSED;
-                    });
-                } catch (error) {
-                    console.error("Error sending close frame:", error);
-                }
+				if (payloadLen === 126) {
+					payloadLen = (buffer[offset] << 8) | buffer[offset + 1];
+					offset += 2;
+				} else if (payloadLen === 127) {
+					let longPayloadLen = 0;
 
-                this.connection = undefined;
-            }
-        }
-    }
+					for (let i = 0; i < 8; i++)
+						longPayloadLen = (longPayloadLen << 8) | buffer[offset + i];
 
-    private async listenForFrames(): Promise<void> {
-        if (!this.connection) throw new Error("Connection not established");
+					payloadLen = longPayloadLen;
 
-        const buffer = new Uint8Array(65536);
-        let messageBuffer: Uint8Array[] = [];
-        console.log(this.readyState);
-        while (this.readyState === ReadyState.CONNECTED) {
-            const readBytes = await this.connection?.read(buffer);
+					offset += 8;
+				}
 
-            if (!readBytes) {
-                this.close(ErrorTypes.INTERNAL_ERROR);
-                break;
-            }
+				const payload = buffer.subarray(offset, offset + payloadLen);
 
-            let offset = 0;
+				if (fin !== 0)
+					if (messageBuffer.length > 0) {
+						messageBuffer.push(payload);
 
-            while (offset < readBytes) {
-                const fin = (buffer[offset] & 0x80) >> 7;
-                const opcode = (buffer[offset] & 0x0f);
-                const mask = (buffer[offset + 1] & 0x80) >> 7;
+						const completePayload = concatenateUint8Arrays(messageBuffer);
 
-                if (mask) {
-                    this.close(ErrorTypes.PROTOCOL_ERROR);
-                    break;
-                }
+						this.handleFrame(opcode, completePayload);
 
-                let payloadLen = (buffer[offset + 1] & 0x7f);
+						messageBuffer = [];
+					} else this.handleFrame(opcode, payload);
+				else messageBuffer.push(payload);
 
-                offset += 2;
+				offset += payloadLen;
+			}
+		}
+	}
 
-                if (payloadLen === 126) {
-                    payloadLen = (buffer[offset] << 8) | buffer[offset + 1];
-                    offset += 2;
-                } else if (payloadLen === 127) {
-                    let longPayloadLen = 0;
+	private async handleFrame(opcode: number, data: Uint8Array): Promise<void> {
+		switch (opcode) {
+			case 0x1: // Text
+				this.onMessage?.({ data: new TextDecoder().decode(data), type: DataTypes.TEXT });
 
-                    for (let i = 0; i < 8; i++)
-                        longPayloadLen = (longPayloadLen << 8) | buffer[offset + i];
+				break;
+			case 0x2: // Binary
+				this.onMessage?.({ data, type: DataTypes.BINARY });
 
-                    payloadLen = longPayloadLen;
+				break;
+			case 0x9: // Ping
+				await this.connection?.write(new FrameGenerator(0xA, data, true).frame);
 
-                    offset += 8;
-                }
+				break;
+			case 0x8: // Close
+				this.readyState = ReadyState.CLOSED;
+				this.onClose?.((data[0] << 8) | data[1]);
 
-                const payload = buffer.subarray(offset, offset + payloadLen);
+				break;
+			default:
+				this.close(ErrorTypes.INVALID_OPCODE);
 
-                if (fin !== 0)
-                    if (messageBuffer.length > 0) {
-                        messageBuffer.push(payload);
-
-                        const completePayload = concatenateUint8Arrays(messageBuffer);
-
-                        this.handleFrame(opcode, completePayload);
-
-                        messageBuffer = [];
-                    } else this.handleFrame(opcode, payload);
-                else messageBuffer.push(payload);
-
-                offset += payloadLen;
-            }
-        }
-    }
-
-    private async handleFrame(opcode: number, data: Uint8Array): Promise<void> {
-        switch (opcode) {
-            case 0x1: // Text
-                this.onMessage?.({ data: new TextDecoder().decode(data), type: DataTypes.TEXT });
-                break;
-
-            case 0x2: // Binary
-                this.onMessage?.({ data, type: DataTypes.BINARY });
-
-                break;
-
-            case 0x9: // Ping
-                await this.connection?.write(new FrameGenerator(0xA, data, true).frame);
-
-                break;
-
-            case 0x8: // Close
-                this.readyState = ReadyState.CLOSED;
-                this.onClose?.((data[0] << 8) | data[1]);
-
-                break;
-
-            default:
-                this.close(ErrorTypes.INVALID_OPCODE);
-                break;
-        }
-    }
+				break;
+		}
+	}
 }
 
 export { WebSpocket, ReadyState };

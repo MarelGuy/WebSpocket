@@ -1,3 +1,5 @@
+import * as encoding from "@std/encoding";
+
 import { generateSecWebSocketKey } from "./functions/generateSecWebSocketKey.ts";
 import { concatenateUint8Arrays } from "./functions/concatenateUint8Arrays.ts";
 import { DataTypes, ErrorTypes, ReadyState } from "./enums.ts";
@@ -5,10 +7,13 @@ import { FrameGenerator } from "./Frame.ts";
 
 class WebSpocket {
 	url: URL;
+	protocols?: string[];
+	headers?: Headers;
+	extensions?: string[];
+
 	readyState: ReadyState;
-	protocols?: string | string[];
-	headers: Headers = new Headers();
 	connection?: Deno.Conn;
+
 	e?: {
 		type: DataTypes;
 		data: string | Uint8Array;
@@ -19,12 +24,14 @@ class WebSpocket {
 	onError?: (error: ErrorTypes) => void;
 	onClose?: (errorType: ErrorTypes) => void;
 
-	constructor(connectOptions: { url: string, protocols?: string | string[], headers?: Headers; }) {
-		this.url = new URL(connectOptions.url);
+	constructor(connectOptions: { url: string, protocols?: string[], headers?: Headers; extensions?: string[]; }) {
 		this.readyState = ReadyState.CLOSED;
-		this.protocols = connectOptions.protocols;
 
-		if (connectOptions.headers) this.headers = connectOptions.headers;
+		this.url = new URL(connectOptions.url);
+
+		this.protocols = connectOptions.protocols;
+		this.headers = connectOptions.headers;
+		this.extensions = connectOptions.extensions;
 	}
 
 	async connect(headers?: Headers): Promise<void> {
@@ -38,25 +45,54 @@ class WebSpocket {
 			transport: "tcp",
 		});
 
+		const key = generateSecWebSocketKey();
+		const magicString = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
 		const request = [
 			`GET ${this.url.pathname} HTTP/1.1`,
 			`host: ${this.url.hostname}`,
+			`origin: ${this.url.origin}`,
 			`upgrade: websocket`,
 			`connection: Upgrade`,
-			`sec-websocket-key: ${generateSecWebSocketKey()}`,
+			`sec-websocket-key: ${key}`,
 			`sec-websocket-version: 13`,
-			'user-agent: WebSpocket',
-			...Array.from(this.headers.entries()).map(([key, value]) => `${key}: ${value}`),
-			`\r\n`
-		].join("\r\n");
+			`user-agent: WebSpocket/1.0.0`,
+			...Array.from((this.headers ? this.headers.entries() : [])).map(([key, value]) => `${key}: ${value}`)
+		];
 
-		await connection.write(new TextEncoder().encode(request));
+		if (this.protocols) request.push(`sec-websocket-protocol: ${this.protocols.join(", ")}`);
+		if (this.extensions) request.push(`sec-websocket-extensions: ${this.extensions.join(", ")}`);
+
+		request.push("\r\n");
+
+		const encoder = new TextEncoder();
+		const decoder = new TextDecoder();
+
+		await connection.write(encoder.encode(request.join("\r\n")));
 
 		const buffer = new Uint8Array(1024);
 
 		await connection.read(buffer);
 
-		if (new TextDecoder().decode(buffer).split("\r\n")[0].split(" ")[1] == "101") {
+		const response = decoder.decode(buffer).split("\r\n");
+
+		response.pop();
+
+		const checks: boolean[] = [false, false, false, false];
+
+		for (let i: number = 0; i < response.length; i++) {
+			if (!response[i] || response[i] === "") continue;
+			const field = response[i].split(": ");
+
+			if (field[0].startsWith("HTTP/1.1") && field[0].split(" ")[1] === "101") checks[0] = true;
+
+			if (field[0] === "sec-websocket-accept" && encoding.encodeBase64(await crypto.subtle.digest("sha-1", encoder.encode(key.concat(magicString)))) === field[1]) checks[1] = true;
+
+			if (field[0] === "connection" && field[1].trim() === "Upgrade") checks[2] = true;
+			if (field[0] === "upgrade" && field[1].trim() === "websocket") checks[3] = true;
+		}
+
+		if (checks.filter((check) => !check).length === 0) {
 			this.readyState = ReadyState.CONNECTED;
 			this.connection = connection;
 		} else this.readyState = ReadyState.CLOSED;

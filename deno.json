@@ -3,5 +3,7 @@
     "dev": "deno run --watch --allow-net test/main.ts",
     "socket": "deno run --watch --allow-net test/socket.ts"
   },
-  "imports": {}
+  "imports": {
+    "@std/encoding": "jsr:@std/encoding@^1.0.6"
+  }
 }

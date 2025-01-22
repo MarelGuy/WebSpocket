@@ -32,18 +32,30 @@ class WebSpocket {
 		this.protocols = connectOptions.protocols;
 		this.headers = connectOptions.headers;
 		this.extensions = connectOptions.extensions;
+
+		if (this.url.protocol !== "ws:" && this.url.protocol !== "wss:") throw new Error("Invalid protocol");
 	}
 
 	async connect(headers?: Headers): Promise<void> {
 		this.readyState = ReadyState.CONNECTING;
 
 		if (headers) this.headers = headers;
+		let connection: Deno.TcpConn | Deno.TlsConn | null = null;
 
-		const connection: Deno.TcpConn = await Deno.connect({
-			hostname: this.url.hostname,
-			port: parseInt(this.url.port, 10),
-			transport: "tcp",
-		});
+		if (this.url.protocol === "ws:")
+			connection = await Deno.connect({
+				hostname: this.url.hostname,
+				port: parseInt(this.url.port, 10) || 80,
+				transport: "tcp",
+			});
+
+		if (this.url.protocol === "wss:")
+			connection = await Deno.connectTls({
+				hostname: this.url.hostname,
+				port: parseInt(this.url.port, 10) || 443,
+			});
+
+		if (!connection) throw new Error("Connection failed");
 
 		const key = generateSecWebSocketKey();
 		const magicString = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -52,16 +64,16 @@ class WebSpocket {
 			`GET ${this.url.pathname} HTTP/1.1`,
 			`host: ${this.url.hostname}`,
 			`origin: ${this.url.origin}`,
+			`user-agent: WebSpocket/1.0.0`,
 			`upgrade: websocket`,
 			`connection: Upgrade`,
 			`sec-websocket-key: ${key}`,
 			`sec-websocket-version: 13`,
-			`user-agent: WebSpocket/1.0.0`,
-			...Array.from((this.headers ? this.headers.entries() : [])).map(([key, value]) => `${key}: ${value}`)
 		];
 
 		if (this.protocols) request.push(`sec-websocket-protocol: ${this.protocols.join(", ")}`);
 		if (this.extensions) request.push(`sec-websocket-extensions: ${this.extensions.join(", ")}`);
+		if (this.headers) request.push(...Array.from(this.headers.entries()).map(([key, value]) => `${key}: ${value}`));
 
 		request.push("\r\n");
 

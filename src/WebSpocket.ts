@@ -4,6 +4,8 @@ import { generateSecWebSocketKey } from "./functions/generateSecWebSocketKey.ts"
 import { concatenateUint8Arrays } from "./functions/concatenateUint8Arrays.ts";
 import { DataTypes, ErrorTypes, ReadyState } from "./enums.ts";
 import { FrameGenerator } from "./Frame.ts";
+import { write } from "./functions/write.ts";
+import { read } from "./functions/read.ts";
 
 class WebSpocket {
 	url: URL;
@@ -36,10 +38,9 @@ class WebSpocket {
 		if (this.url.protocol !== "ws:" && this.url.protocol !== "wss:") throw new Error("Invalid protocol");
 	}
 
-	async connect(headers?: Headers): Promise<void> {
+	async connect(): Promise<void> {
 		this.readyState = ReadyState.CONNECTING;
 
-		if (headers) this.headers = headers;
 		let connection: Deno.TcpConn | Deno.TlsConn | null = null;
 
 		if (this.url.protocol === "ws:")
@@ -58,7 +59,6 @@ class WebSpocket {
 		if (!connection) throw new Error("Connection failed");
 
 		const key = generateSecWebSocketKey();
-		const magicString = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 		const request = [
 			`GET ${this.url.pathname} HTTP/1.1`,
@@ -77,20 +77,13 @@ class WebSpocket {
 
 		request.push("\r\n");
 
-		const encoder = new TextEncoder();
-		const decoder = new TextDecoder();
+		write(connection, request.join("\r\n"));
 
-		await connection.write(encoder.encode(request.join("\r\n")));
-
-		const buffer = new Uint8Array(1024);
-
-		await connection.read(buffer);
-
-		const response = decoder.decode(buffer).split("\r\n");
+		const response = (await read(connection)).data.split("\r\n");
 
 		response.pop();
 
-		const checks: boolean[] = [false, false, false, false];
+		const checks: boolean[] = [];
 
 		for (let i: number = 0; i < response.length; i++) {
 			if (!response[i] || response[i] === "") continue;
@@ -98,7 +91,7 @@ class WebSpocket {
 
 			if (field[0].startsWith("HTTP/1.1") && field[0].split(" ")[1] === "101") checks[0] = true;
 
-			if (field[0] === "sec-websocket-accept" && encoding.encodeBase64(await crypto.subtle.digest("sha-1", encoder.encode(key.concat(magicString)))) === field[1]) checks[1] = true;
+			if (field[0] === "sec-websocket-accept" && encoding.encodeBase64(await crypto.subtle.digest("sha-1", new TextEncoder().encode(key.concat("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")))) === field[1]) checks[1] = true;
 
 			if (field[0] === "connection" && field[1].trim() === "Upgrade") checks[2] = true;
 			if (field[0] === "upgrade" && field[1].trim() === "websocket") checks[3] = true;
@@ -118,7 +111,7 @@ class WebSpocket {
 			if (!data) return;
 
 			this.readyState = ReadyState.OPEN;
-			this.connection?.write(new FrameGenerator(0x1, new TextEncoder().encode(data), true).frame).then(() => this.readyState = ReadyState.CONNECTED);
+			write(this.connection!, new FrameGenerator(0x1, new TextEncoder().encode(data), true).frame).then(() => this.readyState = ReadyState.CONNECTED);
 		}
 	}
 
@@ -133,7 +126,7 @@ class WebSpocket {
 					errorTypeBytes[0] = (errorType >> 8) & 0xFF;
 					errorTypeBytes[1] = errorType & 0xFF;
 
-					this.connection.write(new FrameGenerator(0x8, errorTypeBytes, true).frame).then(() => {
+					write(this.connection!, new FrameGenerator(0x8, errorTypeBytes, true).frame).then(() => {
 						this.connection!.close();
 						this.readyState = ReadyState.CLOSED;
 					});
@@ -148,21 +141,19 @@ class WebSpocket {
 	private async listenForFrames(): Promise<void> {
 		if (!this.connection) throw new Error("Connection not established");
 
-		const buffer = new Uint8Array(65536);
-
 		let messageBuffer: Uint8Array[] = [];
 
 		while (this.readyState === ReadyState.CONNECTED) {
-			const readBytes = await this.connection?.read(buffer);
+			const { data, buffer } = await read(this.connection!);
 
-			if (!readBytes) {
+			if (!data) {
 				this.close(ErrorTypes.INTERNAL_ERROR);
 				break;
 			}
 
 			let offset = 0;
 
-			while (offset < readBytes) {
+			while (offset < data.length) {
 				const fin = (buffer[offset] & 0x80) >> 7;
 				const opcode = (buffer[offset] & 0x0f);
 				const mask = (buffer[offset + 1] & 0x80) >> 7;
@@ -220,7 +211,7 @@ class WebSpocket {
 
 				break;
 			case 0x9: // Ping
-				await this.connection?.write(new FrameGenerator(0xA, data, true).frame);
+				await write(this.connection!, new FrameGenerator(0xA, data, true).frame);
 
 				break;
 			case 0x8: // Close

@@ -1,8 +1,7 @@
 {
   "tasks": {
     "dev": "deno run --watch --allow-net test/main.ts",
-    "test": "deno run --watch --allow-net test/main_test.ts",
-    "deno": "deno run --watch --allow-net test/main_deno.ts"
+    "socket": "deno run --watch --allow-net test/socket.ts"
   },
   "imports": {}
 }

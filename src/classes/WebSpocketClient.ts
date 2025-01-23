@@ -13,7 +13,7 @@ import { read } from "../functions/read.ts";
  * This class is used to establish a WebSocket connection to a server and handle incoming messages.
  * It provides methods to send messages, close the connection, and handle events such as `onReady`, `onMessage`, `onError`, and `onClose`.
  */
-class WebSpocket {
+class WebSpocketClient {
 	/**
 	 * The URL of the WebSocket server to connect to.
 	 */
@@ -329,4 +329,4 @@ class WebSpocket {
 	}
 }
 
-export { WebSpocket, ReadyState };
+export { WebSpocketClient, ReadyState };

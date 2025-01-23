@@ -6,6 +6,7 @@ import { DataTypes, ErrorTypes, ReadyState } from "../enums.ts";
 import { FrameGenerator } from "./Frame.ts";
 import { write } from "../functions/write.ts";
 import { read } from "../functions/read.ts";
+import { ConnectionOptions, Message } from "../types.d.ts";
 
 /**
  * Represents a WebSocket connection.
@@ -40,10 +41,7 @@ class WebSpocketClient {
 	readyState: ReadyState;
 
 	private connection?: Deno.Conn | null;
-	private e?: {
-		type: DataTypes;
-		data: string | Uint8Array;
-	};
+	private e?: Message;
 
 	/**
 	 * Event handler for when the WebSocket connection is ready to receive messages.
@@ -53,7 +51,7 @@ class WebSpocketClient {
 	/**
 	 * Event handler for when a message is received from the server.
 	 */
-	onMessage?: (e: { type: DataTypes; data: string | Uint8Array; }) => void;
+	onMessage?: (e: Message) => void;
 
 	/**
 	 * Event handler for when an error occurs.
@@ -74,12 +72,7 @@ class WebSpocketClient {
 	 * @param connectOptions.extensions An optional array of extensions to use when connecting to the server.
 	 * @throws {Error} If the URL does not have the `ws:` or `wss:` protocol.
 	 */
-	constructor(connectOptions: {
-		url: string;
-		protocols?: string[];
-		headers?: Headers;
-		extensions?: string[];
-	}) {
+	constructor(connectOptions: ConnectionOptions) {
 		this.readyState = ReadyState.CLOSED;
 
 		this.url = new URL(connectOptions.url);

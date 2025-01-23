@@ -7,26 +7,79 @@ import { FrameGenerator } from "./Frame.ts";
 import { write } from "./functions/write.ts";
 import { read } from "./functions/read.ts";
 
+/**
+ * Represents a WebSocket connection.
+ * @remarks
+ * This class is used to establish a WebSocket connection to a server and handle incoming messages.
+ * It provides methods to send messages, close the connection, and handle events such as `onReady`, `onMessage`, `onError`, and `onClose`.
+ */
 class WebSpocket {
+	/**
+	 * The URL of the WebSocket server to connect to.
+	 */
 	url: URL;
+
+	/**
+	 * An array of protocols to use when connecting to the server.
+	 */
 	protocols?: string[];
+
+	/**
+	 * An object of headers to send with the connection request.
+	 */
 	headers?: Headers;
+
+	/**
+	 * An array of extensions to use when connecting to the server.
+	 */
 	extensions?: string[];
 
+	/**
+	 * The current state of the WebSocket connection.
+	 */
 	readyState: ReadyState;
-	connection?: Deno.Conn;
 
-	e?: {
+	private connection?: Deno.Conn | null;
+	private e?: {
 		type: DataTypes;
 		data: string | Uint8Array;
 	};
 
+	/**
+	 * Event handler for when the WebSocket connection is ready to receive messages.
+	 */
 	onReady?: () => void;
+
+	/**
+	 * Event handler for when a message is received from the server.
+	 */
 	onMessage?: (e: { type: DataTypes; data: string | Uint8Array; }) => void;
+
+	/**
+	 * Event handler for when an error occurs.
+	 */
 	onError?: (error: ErrorTypes) => void;
+
+	/**
+	 * Event handler for when the WebSocket connection is closed.
+	 */
 	onClose?: (errorType: ErrorTypes) => void;
 
-	constructor(connectOptions: { url: string, protocols?: string[], headers?: Headers; extensions?: string[]; }) {
+	/**
+	 * Constructs a new WebSpocket instance.
+	 * @param connectOptions Options for connecting to the WebSocket server.
+	 * @param connectOptions.url The URL to connect to.
+	 * @param connectOptions.protocols An optional array of protocols to use when connecting to the server.
+	 * @param connectOptions.headers An optional object of headers to send with the connection request.
+	 * @param connectOptions.extensions An optional array of extensions to use when connecting to the server.
+	 * @throws {Error} If the URL does not have the `ws:` or `wss:` protocol.
+	 */
+	constructor(connectOptions: {
+		url: string;
+		protocols?: string[];
+		headers?: Headers;
+		extensions?: string[];
+	}) {
 		this.readyState = ReadyState.CLOSED;
 
 		this.url = new URL(connectOptions.url);
@@ -35,9 +88,19 @@ class WebSpocket {
 		this.headers = connectOptions.headers;
 		this.extensions = connectOptions.extensions;
 
-		if (this.url.protocol !== "ws:" && this.url.protocol !== "wss:") throw new Error("Invalid protocol");
+		if (this.url.protocol !== "ws:" && this.url.protocol !== "wss:")
+			throw new Error("Invalid protocol");
 	}
 
+	/**
+	 * Establishes a WebSocket connection to the specified URL.
+	 * @remarks
+	 * This method will send a WebSocket connection request to the server
+	 * and wait for a response. If the response is valid, it will set the
+	 * state to `CONNECTED` and start listening for incoming frames.
+	 * Otherwise, it will set the state to `CLOSED`.
+	 * @throws {Error} If the connection could not be established
+	 */
 	async connect(): Promise<void> {
 		this.readyState = ReadyState.CONNECTING;
 
@@ -71,9 +134,12 @@ class WebSpocket {
 			`sec-websocket-version: 13`,
 		];
 
-		if (this.protocols) request.push(`sec-websocket-protocol: ${this.protocols.join(", ")}`);
-		if (this.extensions) request.push(`sec-websocket-extensions: ${this.extensions.join(", ")}`);
-		if (this.headers) request.push(...Array.from(this.headers.entries()).map(([key, value]) => `${key}: ${value}`));
+		if (this.protocols)
+			request.push(`sec-websocket-protocol: ${this.protocols.join(", ")}`);
+		if (this.extensions)
+			request.push(`sec-websocket-extensions: ${this.extensions.join(", ")}`);
+		if (this.headers)
+			request.push(...Array.from(this.headers.entries()).map(([key, value]) => `${key}: ${value}`));
 
 		request.push("\r\n");
 
@@ -89,9 +155,14 @@ class WebSpocket {
 			if (!response[i] || response[i] === "") continue;
 			const field = response[i].split(": ");
 
-			if (field[0].startsWith("HTTP/1.1") && field[0].split(" ")[1] === "101") checks[0] = true;
+			if (field[0].startsWith("HTTP/1.1") && field[0].split(" ")[1] === "101")
+				checks[0] = true;
 
-			if (field[0] === "sec-websocket-accept" && encoding.encodeBase64(await crypto.subtle.digest("sha-1", new TextEncoder().encode(key.concat("258EAFA5-E914-47DA-95CA-C5AB0DC85B11")))) === field[1]) checks[1] = true;
+			if (field[0] === "sec-websocket-accept" && encoding.encodeBase64(
+				await crypto.subtle.digest("sha-1", new TextEncoder().encode(key.concat("258EAFA5-E914-47DA-95CA-C5AB0DC85B11"))
+				)
+			) === field[1])
+				checks[1] = true;
 
 			if (field[0] === "connection" && field[1].trim() === "Upgrade") checks[2] = true;
 			if (field[0] === "upgrade" && field[1].trim() === "websocket") checks[3] = true;
@@ -106,6 +177,14 @@ class WebSpocket {
 		this.onReady?.();
 	}
 
+	/**
+	 * Sends a message to the server.
+	 * @param data The message to send to the server. If this is an empty string, the function will do nothing.
+	 * @remarks
+	 * If the connection is not in the `OPEN` or `CONNECTED` state, this function will do nothing.
+	 * Otherwise, it will send a frame with the message to the server and set the state to `OPEN`.
+	 * Once the frame has been sent, the state will be set back to `CONNECTED`.
+	 */
 	send(data: string): void {
 		if (this.readyState === ReadyState.OPEN || this.readyState === ReadyState.CONNECTED) {
 			if (!data) return;
@@ -115,6 +194,15 @@ class WebSpocket {
 		}
 	}
 
+	/**
+	 * Closes the WebSocket connection and sends a close frame to the server.
+	 * @param errorType The error type to send in the close frame.
+	 * @remarks
+	 * If the connection is already in the `CLOSING` state, this function will
+	 * do nothing. Otherwise, it will set the state to `CLOSING`, send the close
+	 * frame to the server, and then close the connection. If an error occurs
+	 * while sending the close frame, an error will be logged to the console.
+	 */
 	close(errorType: ErrorTypes): void {
 		if (this.readyState !== ReadyState.CLOSED && this.readyState !== ReadyState.CLOSING) {
 			this.readyState = ReadyState.CLOSING;
@@ -138,6 +226,14 @@ class WebSpocket {
 		}
 	}
 
+	/**
+	 * Listens for incoming frames and handles them accordingly.
+	 * @private
+	 * @remarks
+	 * This function will continuously read incoming frames from the connection
+	 * and handle them according to the WebSocket protocol. It will handle
+	 * fragmentation and apply masking when necessary.
+	 */
 	private async listenForFrames(): Promise<void> {
 		if (!this.connection) throw new Error("Connection not established");
 
@@ -200,6 +296,12 @@ class WebSpocket {
 		}
 	}
 
+	/**
+	 * Handles a received frame.
+	 * @param opcode The opcode of the frame.
+	 * @param data The data of the frame.
+	 * @returns A Promise that resolves when the frame has been handled.
+	 */
 	private async handleFrame(opcode: number, data: Uint8Array): Promise<void> {
 		switch (opcode) {
 			case 0x1: // Text

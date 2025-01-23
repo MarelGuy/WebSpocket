@@ -3,7 +3,7 @@ import * as encoding from "@std/encoding";
 import { generateSecWebSocketKey } from "../functions/generateSecWebSocketKey.ts";
 import { concatenateUint8Arrays } from "../functions/concatenateUint8Arrays.ts";
 import { DataTypes, ErrorTypes, ReadyState } from "../enums.ts";
-import { FrameGenerator } from "./Frame.ts";
+import { FrameGenerator } from "./FrameGenerator.ts";
 import { write } from "../functions/write.ts";
 import { read } from "../functions/read.ts";
 import { ConnectionOptions, Message } from "../types.d.ts";

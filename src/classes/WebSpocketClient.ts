@@ -155,8 +155,6 @@ class WebSpocketClient {
 
     const response = responseText.trim().split("\r\n");
 
-    response.pop();
-
     const checks: boolean[] = [];
 
     for (let i: number = 0; i < response.length; i++) {

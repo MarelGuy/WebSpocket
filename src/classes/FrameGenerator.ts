@@ -57,13 +57,13 @@ class FrameGenerator {
 
     frame.set(header);
 
+    frame.set(data, header.length);
+
     if (masked && maskingKey) {
       for (let i = 0; i < payloadLen; i++) {
-        data[i] ^= maskingKey[i % 4];
+        frame[header.length + i] ^= maskingKey[i % 4];
       }
     }
-
-    frame.set(data, header.length);
 
     this.frame = frame;
   }

@@ -148,7 +148,13 @@ class WebSpocketClient {
 
     write(connection, request.join("\r\n"));
 
-    const response = (await read(connection)).data.split("\r\n");
+    const { bytesRead, buffer } = await read(connection);
+
+    const responseText = new TextDecoder().decode(
+      buffer.subarray(0, bytesRead || 0),
+    );
+
+    const response = responseText.trim().split("\r\n");
 
     response.pop();
 
@@ -200,7 +206,7 @@ class WebSpocketClient {
    * Otherwise, it will send a frame with the message to the server and set the state to `OPEN`.
    * Once the frame has been sent, the state will be set back to `CONNECTED`.
    */
-  send(data: string): void {
+  send(data: string | Uint8Array): void {
     if (
       this.readyState === ReadyState.OPEN ||
       this.readyState === ReadyState.CONNECTED
@@ -208,9 +214,19 @@ class WebSpocketClient {
       if (!data) return;
 
       this.readyState = ReadyState.OPEN;
+
+      let frame: Uint8Array;
+
+      if (typeof data === "string") {
+        frame =
+          new FrameGenerator(0x1, new TextEncoder().encode(data), true).frame;
+      } else {
+        frame = new FrameGenerator(0x2, data, true).frame;
+      }
+
       write(
         this.connection!,
-        new FrameGenerator(0x1, new TextEncoder().encode(data), true).frame,
+        frame,
       ).then(() => this.readyState = ReadyState.CONNECTED);
     }
   }
@@ -232,13 +248,14 @@ class WebSpocketClient {
       this.readyState = ReadyState.CLOSING;
 
       if (this.connection) {
+        const conn = this.connection;
+        this.connection = undefined;
+
         try {
           const errorTypeBytes = new Uint8Array(2);
 
           errorTypeBytes[0] = (errorType >> 8) & 0xFF;
           errorTypeBytes[1] = errorType & 0xFF;
-
-          const conn = this.connection;
 
           write(
             conn,
@@ -271,16 +288,17 @@ class WebSpocketClient {
 
     while (this.readyState === ReadyState.CONNECTED) {
       try {
-        const { data, buffer } = await read(this.connection!);
+        const { bytesRead, buffer } = await read(this.connection!);
 
-        if (!data) {
+        if (bytesRead === null || bytesRead === 0) {
           this.close(ErrorTypes.INTERNAL_ERROR);
+
           break;
         }
 
         let offset = 0;
 
-        while (offset < data.length) {
+        while (offset < bytesRead) {
           const fin = (buffer[offset] & 0x80) >> 7;
           const opcode = buffer[offset] & 0x0f;
           const mask = (buffer[offset + 1] & 0x80) >> 7;

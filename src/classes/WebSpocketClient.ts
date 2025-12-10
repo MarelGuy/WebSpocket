@@ -168,8 +168,10 @@ class WebSpocketClient {
         checks[0] = true;
       }
 
+      const headerName = field[0].toLowerCase();
+
       if (
-        field[0] === "sec-websocket-accept" && encoding.encodeBase64(
+        headerName === "sec-websocket-accept" && encoding.encodeBase64(
             await crypto.subtle.digest(
               "sha-1",
               new TextEncoder().encode(
@@ -181,10 +183,10 @@ class WebSpocketClient {
         checks[1] = true;
       }
 
-      if (field[0] === "connection" && field[1].trim() === "Upgrade") {
+      if (headerName === "connection" && field[1].trim() === "Upgrade") {
         checks[2] = true;
       }
-      if (field[0] === "upgrade" && field[1].trim() === "websocket") {
+      if (headerName === "upgrade" && field[1].trim() === "websocket") {
         checks[3] = true;
       }
     }

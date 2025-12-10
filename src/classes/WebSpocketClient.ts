@@ -392,11 +392,25 @@ class WebSpocketClient {
 
         break;
       case 0x8: { // Close
-        this.readyState = ReadyState.CLOSED;
-
         const closeCode = data.length >= 2 ? (data[0] << 8) | data[1] : 1005;
 
-        this.onClose?.(closeCode);
+        if (this.readyState === ReadyState.CLOSING) {
+          this.readyState = ReadyState.CLOSED;
+          this.connection?.close();
+        } else {
+          this.readyState = ReadyState.CLOSING;
+
+          const closeFrame = new FrameGenerator(0x8, data, true).frame;
+
+          write(this.connection!, closeFrame)
+            .then(() => this.connection?.close())
+            .catch(() => {})
+            .finally(() => {
+              this.readyState = ReadyState.CLOSED;
+
+              this.onClose?.(closeCode);
+            });
+        }
 
         break;
       }

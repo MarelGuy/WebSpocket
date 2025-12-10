@@ -38,9 +38,13 @@ class FrameGenerator {
     } else {
       header[1] = (masked ? 0x80 : 0x00) | 127;
 
-      for (let i = 0; i < 8; i++) {
-        header[2 + i] = (payloadLen >> ((7 - i) * 8)) & 0xff;
-      }
+      const view = new DataView(
+        header.buffer,
+        header.byteOffset,
+        header.byteLength,
+      );
+
+      view.setBigUint64(2, BigInt(payloadLen), false);
     }
 
     let maskingKey: Uint8Array | null = null;

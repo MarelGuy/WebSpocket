@@ -318,14 +318,20 @@ class WebSpocketClient {
             payloadLen = (buffer[offset] << 8) | buffer[offset + 1];
             offset += 2;
           } else if (payloadLen === 127) {
-            let longPayloadLen = 0;
+            const view = new DataView(
+              buffer.buffer,
+              buffer.byteOffset + offset,
+              8,
+            );
 
-            for (let i = 0; i < 8; i++) {
-              longPayloadLen = (longPayloadLen << 8) | buffer[offset + i];
+            const bigLen = view.getBigUint64(0, false);
+
+            if (bigLen > Number.MAX_SAFE_INTEGER) {
+              this.close(ErrorTypes.MESSAGE_TOO_BIG);
+              break;
             }
 
-            payloadLen = longPayloadLen;
-
+            payloadLen = Number(bigLen);
             offset += 8;
           }
 

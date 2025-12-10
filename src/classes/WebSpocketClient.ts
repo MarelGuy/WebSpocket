@@ -270,59 +270,74 @@ class WebSpocketClient {
     let messageBuffer: Uint8Array[] = [];
 
     while (this.readyState === ReadyState.CONNECTED) {
-      const { data, buffer } = await read(this.connection!);
+      try {
+        const { data, buffer } = await read(this.connection!);
 
-      if (!data) {
-        this.close(ErrorTypes.INTERNAL_ERROR);
-        break;
-      }
-
-      let offset = 0;
-
-      while (offset < data.length) {
-        const fin = (buffer[offset] & 0x80) >> 7;
-        const opcode = buffer[offset] & 0x0f;
-        const mask = (buffer[offset + 1] & 0x80) >> 7;
-
-        if (mask) {
-          this.close(ErrorTypes.PROTOCOL_ERROR);
+        if (!data) {
+          this.close(ErrorTypes.INTERNAL_ERROR);
           break;
         }
 
-        let payloadLen = buffer[offset + 1] & 0x7f;
+        let offset = 0;
 
-        offset += 2;
+        while (offset < data.length) {
+          const fin = (buffer[offset] & 0x80) >> 7;
+          const opcode = buffer[offset] & 0x0f;
+          const mask = (buffer[offset + 1] & 0x80) >> 7;
 
-        if (payloadLen === 126) {
-          payloadLen = (buffer[offset] << 8) | buffer[offset + 1];
-          offset += 2;
-        } else if (payloadLen === 127) {
-          let longPayloadLen = 0;
-
-          for (let i = 0; i < 8; i++) {
-            longPayloadLen = (longPayloadLen << 8) | buffer[offset + i];
+          if (mask) {
+            this.close(ErrorTypes.PROTOCOL_ERROR);
+            break;
           }
 
-          payloadLen = longPayloadLen;
+          let payloadLen = buffer[offset + 1] & 0x7f;
 
-          offset += 8;
+          offset += 2;
+
+          if (payloadLen === 126) {
+            payloadLen = (buffer[offset] << 8) | buffer[offset + 1];
+            offset += 2;
+          } else if (payloadLen === 127) {
+            let longPayloadLen = 0;
+
+            for (let i = 0; i < 8; i++) {
+              longPayloadLen = (longPayloadLen << 8) | buffer[offset + i];
+            }
+
+            payloadLen = longPayloadLen;
+
+            offset += 8;
+          }
+
+          const payload = buffer.subarray(offset, offset + payloadLen);
+
+          if (fin !== 0) {
+            if (messageBuffer.length > 0) {
+              messageBuffer.push(payload);
+
+              const completePayload = concatenateUint8Arrays(messageBuffer);
+
+              this.handleFrame(opcode, completePayload);
+
+              messageBuffer = [];
+            } else this.handleFrame(opcode, payload);
+          } else messageBuffer.push(payload);
+
+          offset += payloadLen;
+        }
+      } catch (err) {
+        if (
+          err instanceof Deno.errors.Interrupted ||
+          err instanceof Deno.errors.BadResource
+        ) {
+          break;
         }
 
-        const payload = buffer.subarray(offset, offset + payloadLen);
+        console.error("Read error:", err);
 
-        if (fin !== 0) {
-          if (messageBuffer.length > 0) {
-            messageBuffer.push(payload);
+        this.close(ErrorTypes.INTERNAL_ERROR);
 
-            const completePayload = concatenateUint8Arrays(messageBuffer);
-
-            this.handleFrame(opcode, completePayload);
-
-            messageBuffer = [];
-          } else this.handleFrame(opcode, payload);
-        } else messageBuffer.push(payload);
-
-        offset += payloadLen;
+        break;
       }
     }
   }

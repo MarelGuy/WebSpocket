@@ -238,16 +238,19 @@ class WebSpocketClient {
           errorTypeBytes[0] = (errorType >> 8) & 0xFF;
           errorTypeBytes[1] = errorType & 0xFF;
 
+          const conn = this.connection;
+
           write(
-            this.connection!,
+            conn,
             new FrameGenerator(0x8, errorTypeBytes, true).frame,
           ).then(() => {
-            this.connection!.close();
+            conn.close();
             this.readyState = ReadyState.CLOSED;
           });
         } catch (error) {
           console.error("Error sending close frame:", error);
         }
+
         this.connection = undefined;
       }
     }

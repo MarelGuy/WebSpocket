@@ -54,7 +54,7 @@ class FrameGenerator {
 
       crypto.getRandomValues(maskingKey);
 
-      header.set(maskingKey, headerLen - 4);
+      header.set(maskingKey, header.length - 4);
     }
 
     const frame = new Uint8Array(header.length + payloadLen);

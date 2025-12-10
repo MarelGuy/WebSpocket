@@ -41,7 +41,6 @@ class WebSpocketClient {
   readyState: ReadyState;
 
   private connection?: Deno.Conn | null;
-  private e?: Message;
 
   /**
    * Event handler for when the WebSocket connection is ready to receive messages.
@@ -394,11 +393,15 @@ class WebSpocketClient {
         );
 
         break;
-      case 0x8: // Close
+      case 0x8: { // Close
         this.readyState = ReadyState.CLOSED;
-        this.onClose?.((data[0] << 8) | data[1]);
+
+        const closeCode = data.length >= 2 ? (data[0] << 8) | data[1] : 1005;
+
+        this.onClose?.(closeCode);
 
         break;
+      }
       default:
         this.close(ErrorTypes.INVALID_OPCODE);
 

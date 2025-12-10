@@ -1,9 +1,10 @@
 {
   "tasks": {
-    "dev": "deno run --watch --allow-net test/main.ts",
-    "socket": "deno run --watch --allow-net test/socket.ts"
+    "dev": "deno run --watch --allow-net test/mock_server.ts",
+    "test": "deno test --allow-net --allow-read test/client_test.ts"
   },
   "imports": {
-    "@std/encoding": "jsr:@std/encoding@^1.0.6"
+    "@std/encoding": "jsr:@std/encoding@^1.0.6",
+    "@std/assert": "jsr:@std/assert@^1.0.0"
   }
 }

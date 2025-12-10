@@ -6,17 +6,17 @@ import { DataTypes } from "./enums.ts";
  * @readonly
  */
 interface Message {
-    /**
-     * The type of the message.
-     * @type {DataTypes}
-     */
-    type: DataTypes;
+  /**
+   * The type of the message.
+   * @type {DataTypes}
+   */
+  type: DataTypes;
 
-    /**
-     * The data of the message.
-     * @type {string | Uint8Array}
-     */
-    data: string | Uint8Array;
+  /**
+   * The data of the message.
+   * @type {string | Uint8Array}
+   */
+  data: string | Uint8Array;
 }
 
 /**
@@ -24,30 +24,30 @@ interface Message {
  * @interface
  */
 interface ConnectionOptions {
-    /**
-     * The URL to connect to.
-     * @type {string}
-     * @required
-     */
-    url: string;
+  /**
+   * The URL to connect to.
+   * @type {string}
+   * @required
+   */
+  url: string;
 
-    /**
-     * An array of protocols to use when connecting to the server.
-     * @type {Headers}
-     */
-    headers?: Headers;
+  /**
+   * An array of protocols to use when connecting to the server.
+   * @type {Headers}
+   */
+  headers?: Headers;
 
-    /**
-     * An array of extensions to use when connecting to the server.
-     * @type {string[]}
-     */
-    protocols?: string[];
+  /**
+   * An array of extensions to use when connecting to the server.
+   * @type {string[]}
+   */
+  protocols?: string[];
 
-    /**
-     * An array of extensions to use when connecting to the server.
-     * @type {string[]}
-     */
-    extensions?: string[];
+  /**
+   * An array of extensions to use when connecting to the server.
+   * @type {string[]}
+   */
+  extensions?: string[];
 }
 
-export { Message, ConnectionOptions };
+export { ConnectionOptions, Message };
